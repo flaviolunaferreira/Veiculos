@@ -1,0 +1,71 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.2.0' // Use a versão que você escolheu
+	id 'io.spring.dependency-management' version '1.1.4'
+	id "io.freefair.lombok" version "8.4" // Plugin do Lombok
+}
+
+group = 'br.com.desafio'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	sourceCompatibility = '21'
+}
+
+repositories {
+	mavenCentral()
+}
+
+// Gerenciamento de dependências do Spring Cloud (para OpenFeign e WireMock)
+ext {
+	set('springCloudVersion', "2023.0.0")
+}
+
+dependencyManagement {
+	imports {
+		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+	}
+}
+
+dependencies {
+	// --- CORE ---
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	
+	// --- PERSISTÊNCIA ---
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	runtimeOnly 'org.postgresql:postgresql'
+	
+	// --- INTEGRAÇÃO ---
+	implementation 'org.springframework.boot:spring-boot-starter-web-services' // SOAP (F1)
+	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'   // REST (F2, F3, Normalização)
+	implementation 'org.springframework.boot:spring-boot-starter-kafka'
+	
+	// --- RESILIÊNCIA ---
+	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+	implementation 'org.springframework.boot:spring-boot-starter-aop' // Necessário para o Resilience4j
+	
+	// --- DOCUMENTAÇÃO ---
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+	
+	// --- UTILITÁRIOS ---
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+	// --- TESTES ---
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+	testImplementation 'org.testcontainers:kafka'
+	testImplementation 'org.springframework.cloud:spring-cloud-contract-wiremock' // REST Mocks (F2, F3)
+	testImplementation 'org.springframework.ws:spring-ws-test' // SOAP Mocks (F1)
+	testImplementation 'org.springframework.kafka:spring-kafka-test'
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
