@@ -34,14 +34,16 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	
 	// --- PERSISTÊNCIA ---
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	runtimeOnly 'org.postgresql:postgresql'
-	
+	// implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
+	// runtimeOnly 'org.postgresql:postgresql'
+
 	// --- INTEGRAÇÃO ---
 	implementation 'org.springframework.boot:spring-boot-starter-web-services' // SOAP (F1)
+	implementation 'org.apache.httpcomponents:httpclient:4.5.14' // Requerido para HttpComponentsMessageSender
 	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'   // REST (F2, F3, Normalização)
-	implementation 'org.springframework.boot:spring-boot-starter-kafka'
-	
+	implementation 'org.springframework.kafka:spring-kafka'
+
 	// --- RESILIÊNCIA ---
 	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
 	implementation 'org.springframework.boot:spring-boot-starter-aop' // Necessário para o Resilience4j
@@ -49,6 +51,16 @@ dependencies {
 	// --- DOCUMENTAÇÃO ---
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
 	
+	// --- SECURITY ---
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
+	// --- OBSERVABILITY (Tracing) ---
+	implementation 'io.micrometer:micrometer-tracing-bridge-brave'
+	implementation 'io.zipkin.reporter2:zipkin-reporter-brave'
+
 	// --- UTILITÁRIOS ---
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
@@ -56,10 +68,12 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.testcontainers:junit-jupiter'
 	testImplementation 'org.testcontainers:postgresql'
+	testImplementation 'org.testcontainers:mongodb'
 	testImplementation 'org.testcontainers:kafka'
 	testImplementation 'org.springframework.cloud:spring-cloud-contract-wiremock' // REST Mocks (F2, F3)
 	testImplementation 'org.springframework.ws:spring-ws-test' // SOAP Mocks (F1)
 	testImplementation 'org.springframework.kafka:spring-kafka-test'
+	testImplementation 'org.springframework.security:spring-security-test'
 }
 
 tasks.withType(JavaCompile) {

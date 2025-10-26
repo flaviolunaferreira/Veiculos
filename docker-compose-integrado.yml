@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # PROJETO VEÍCULOS (Producer)
+  # ==========================================
+  
+  veiculos-app:
+    build: 
+      context: ./veiculos
+      dockerfile: Dockerfile
+    container_name: integrado-veiculos-api
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - SPRING_DATA_MONGODB_URI=mongodb://user:pass@integrado-mongo:27017/idempotency_store?authSource=admin
+      - KAFKA_BOOTSTRAP_SERVERS=integrado-kafka:29092
+      - ZIPKIN_ENDPOINT=http://integrado-zipkin:9411/api/v2/spans
+      # Supplier URLs (Mocks via WireMock)
+      - SUPPLIERS_F1_URL=http://integrado-mocks:8080/ws/f1
+      - SUPPLIERS_F2_URL=http://integrado-mocks:8080/api/f2
+      - SUPPLIERS_F3_URL=http://integrado-mocks:8080/api/f3
+    depends_on:
+      - mongo-db
+      - kafka
+      - zipkin
+      - mocks
+    networks:
+      - integrated-network
+
+  # ==========================================
+  # PROJETO NORMALIZE (Consumer)
+  # ==========================================
+  
+  normalize-app:
+    build:
+      context: ./normalize
+      dockerfile: Dockerfile
+    container_name: integrado-normalize-consumer
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://integrado-postgres:5432/vehicle_analysis
+      - SPRING_DATASOURCE_USERNAME=user
+      - SPRING_DATASOURCE_PASSWORD=pass
+      - KAFKA_BOOTSTRAP_SERVERS=integrado-kafka:29092
+      - ZIPKIN_ENDPOINT=http://integrado-zipkin:9411/api/v2/spans
+    depends_on:
+      - normalize-postgres
+      - kafka
+      - zipkin
+    networks:
+      - integrated-network
+
+  # ==========================================
+  # BANCOS DE DADOS
+  # ==========================================
+
+  # MongoDB para Idempotência (Veículos)
+  mongo-db:
+    image: mongo:7
+    container_name: integrado-mongo
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=user
+      - MONGO_INITDB_ROOT_PASSWORD=pass
+      - MONGO_INITDB_DATABASE=idempotency_store
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - integrated-network
+
+  # PostgreSQL para Logs (Normalize)
+  normalize-postgres:
+    image: postgres:16-alpine
+    container_name: integrado-postgres
+    environment:
+      POSTGRES_DB: vehicle_analysis
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - integrated-network
+
+  # ==========================================
+  # MENSAGERIA (KAFKA)
+  # ==========================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: integrado-zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    ports:
+      - "2181:2181"
+    networks:
+      - integrated-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: integrado-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=integrado-zookeeper:2181
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://integrado-kafka:29092,PLAINTEXT_HOST://localhost:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+    depends_on:
+      - zookeeper
+    networks:
+      - integrated-network
+
+  # ==========================================
+  # OBSERVABILIDADE
+  # ==========================================
+
+  # Zipkin (Tracing Distribuído)
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: integrado-zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - integrated-network
+
+  # ==========================================
+  # MOCKS (WireMock para Fornecedores)
+  # ==========================================
+
+  mocks:
+    image: wiremock/wiremock:latest
+    container_name: integrado-mocks
+    ports:
+      - "9090:8080"
+    command: ["--port", "8080"]
+    volumes:
+      - ./veiculos/src/test/resources/wiremock:/home/wiremock
+    networks:
+      - integrated-network
+
+networks:
+  integrated-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  postgres_data:
+
