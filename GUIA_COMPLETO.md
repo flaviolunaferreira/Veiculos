@@ -11,6 +11,9 @@
 7. [Teste da Integração](#teste-da-integração)
 8. [Troubleshooting](#troubleshooting)
 9. [Referência Técnica](#referência-técnica)
+10. [Melhorias de Segurança e Resiliência](#melhorias-implementadas)
+
+> 📘 **Novo:** Para detalhes sobre Bulkhead e Redaction de PII, consulte [MELHORIAS_IMPLEMENTADAS.md](MELHORIAS_IMPLEMENTADAS.md)
 
 ---
 
@@ -217,6 +220,303 @@ rm -rf normalize/build/libs/*.jar
 # Executar
 ./run-all.sh
 ```
+
+---
+
+## Base de Dados Mock de Veículos
+
+### VehicleDatabase
+
+Componente que simula uma base de **30+ veículos reais** para desenvolvimento e testes.
+
+#### Veículos Incluídos:
+
+| Categoria | Exemplos | Quantidade |
+|-----------|----------|------------|
+| **Populares** | Gol, Onix, Uno, Corolla | 5 |
+| **SUVs** | Tiguan, Compass, RAV4, Equinox | 5 |
+| **Picapes** | Hilux, S10, Amarok, Toro, SW4 | 4 |
+| **Compactos** | Prisma, Mobi, Up!, Etios | 4 |
+| **Sedans Médios** | Cruze, Logan, Jetta | 3 |
+| **Importados/Luxo** | Honda Civic, BMW 320i, Mercedes C180, Audi A3 | 5 |
+| **Com Restrições** | Fox (RENAJUD), Hilux (RENAJUD), Sandero (RENAJUD) | 3 |
+| **Com Recall** | Virtus, Tracker, Argo | 3 |
+| **Ambas Restrições** | T-Cross, Yaris | 2 |
+
+#### Como Funciona:
+
+```java
+// O sistema aceita qualquer dos 3 identificadores:
+// PLACA: "ABC1234"
+// RENAVAM: "12345678901"
+// VIN: "9BWZZZ377VT004251"
+
+// Todos os 3 apontam para o mesmo veículo na base mock
+```
+
+#### Exemplo de Registro:
+
+```json
+{
+  "placa": "ABC1234",
+  "renavam": "12345678901",
+  "vin": "9BWZZZ377VT004251",
+  "marca": "Volkswagen",
+  "modelo": "Gol",
+  "ano": 2020,
+  "renajud": false,
+  "recall": false
+}
+```
+
+#### Fluxo de Conversão para VIN:
+
+```
+1. Cliente envia: PLACA "ABC1234"
+   ↓
+2. F1/F3 consultam VehicleDatabase
+   ↓
+3. Retornam: VIN "9BWZZZ377VT004251" + dados do veículo
+   ↓
+4. Sistema extrai VIN e usa como identificador canônico
+   ↓
+5. Todas as consultas subsequentes usam o VIN
+```
+
+#### Testar Diferentes Cenários:
+
+**Veículo Normal (sem restrições):**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "ABC1234"}}'
+# Resultado: hasConstraints = false, F2 não é chamado
+```
+
+**Veículo com RENAJUD:**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "MNO1234"}}'
+# Resultado: hasConstraints = true, F2 é chamado
+```
+
+**Veículo com Recall:**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "VWX3456"}}'
+# Resultado: hasConstraints = true (recall), F2 é chamado
+```
+
+**Veículo com Ambas Restrições:**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "EFG5678"}}'
+# Resultado: hasConstraints = true (RENAJUD + recall), F2 é chamado
+```
+
+---
+
+## Idempotência Automática
+
+### Como Funciona
+
+O sistema **gera automaticamente** uma chave de idempotência (`Idempotency-Key`) para cada requisição, garantindo que requisições duplicadas não sejam reprocessadas.
+
+#### Comportamento:
+
+| Cenário | Ação |
+|---------|------|
+| Cliente **envia** `Idempotency-Key` | Sistema **usa a chave fornecida** |
+| Cliente **não envia** chave | Sistema **gera automaticamente** (hash do body) |
+
+#### Geração Automática:
+
+A chave é gerada usando **SHA-256** do conteúdo da requisição:
+
+```java
+// Mesmo body = mesma chave
+POST /api/vehicles/analysis
+{"identifier": {"type": "PLACA", "value": "ABC1234"}}
+
+// Gera chave: a1b2c3d4e5f6...
+```
+
+#### Persistência:
+
+As chaves são armazenadas no **MongoDB** com TTL de 24 horas:
+
+```javascript
+{
+  "_id": ObjectId("..."),
+  "key": "a1b2c3d4e5f6...",
+  "response": { /* resposta completa */ },
+  "createdAt": ISODate("2025-10-26T15:30:00Z"),
+  "expiresAt": ISODate("2025-10-27T15:30:00Z")
+}
+```
+
+#### Fluxo Completo:
+
+```
+1. Requisição chega sem Idempotency-Key
+   ↓
+2. IdempotencyFilter intercepta
+   ↓
+3. Lê body da requisição
+   ↓
+4. Gera hash SHA-256 do body
+   ↓
+5. Adiciona header Idempotency-Key: <hash>
+   ↓
+6. VehicleAnalysisService verifica MongoDB
+   - Chave existe? → Retorna resposta em cache
+   - Não existe? → Processa normalmente
+   ↓
+7. Salva resposta no MongoDB com a chave
+```
+
+#### Teste de Idempotência:
+
+**Primeira Requisição (processa):**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "ABC1234"}}'
+# Tempo: ~500ms (consulta F1, F3)
+```
+
+**Segunda Requisição Idêntica (retorna cache):**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": {"type": "PLACA", "value": "ABC1234"}}'
+# Tempo: ~10ms (cache MongoDB)
+```
+
+**Requisição com Chave Manual:**
+```bash
+curl -X POST http://localhost:8080/api/vehicles/analysis \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: minha-chave-123" \
+  -d '{"identifier": {"type": "PLACA", "value": "ABC1234"}}'
+# Usa "minha-chave-123" ao invés de gerar automaticamente
+```
+
+#### Verificar Chaves no MongoDB:
+
+```bash
+# Conectar ao MongoDB
+docker exec -it integrado-mongo mongosh -u user -p pass
+
+# Dentro do mongosh:
+use idempotency_store
+db.idempotency_keys.find().pretty()
+
+# Ver quantas chaves existem
+db.idempotency_keys.countDocuments()
+
+# Ver chaves que expiram em breve
+db.idempotency_keys.find({
+  "expiresAt": {$lt: new Date(Date.now() + 3600000)}
+})
+```
+
+#### Benefícios:
+
+✅ **Transparente:** Cliente não precisa se preocupar com chaves  
+✅ **Determinístico:** Mesmo body = mesma chave  
+✅ **Performance:** Respostas em cache são instantâneas  
+✅ **Compatível:** Aceita chaves manuais se fornecidas  
+✅ **Automático:** Zero configuração necessária  
+
+---
+
+## Persistência: MongoDB vs PostgreSQL
+
+### MongoDB (NoSQL) - Porta 27017
+
+**Função:** Cache de idempotência
+
+**O que armazena:**
+- ✅ Chaves de idempotência (Idempotency-Key)
+- ✅ Respostas completas em cache
+- ✅ TTL de 24 horas (expira automaticamente)
+
+**Quando usa:**
+- Verificar se requisição já foi processada
+- Retornar resposta em cache
+- Evitar reprocessamento
+
+**Collection:** `idempotency_keys`
+
+**Estrutura:**
+```javascript
+{
+  "_id": ObjectId("..."),
+  "key": "a1b2c3d4e5f6...",
+  "response": {
+    "idInputType": "PLACA",
+    "idInputValue": "ABC1234",
+    "vinCanonical": "9BWZZZ377VT004251",
+    "supplierCalls": {...},
+    "hasConstraints": false,
+    "estimatedCostCents": 350
+  },
+  "createdAt": ISODate("2025-10-26T15:30:00Z"),
+  "expiresAt": ISODate("2025-10-27T15:30:00Z")
+}
+```
+
+---
+
+### PostgreSQL (SQL) - Porta 5433
+
+**Função:** Auditoria e analytics
+
+**O que armazena:**
+- ✅ **TODOS** os logs de análise (histórico completo)
+- ✅ Dados consolidados de F1, F2, F3
+- ✅ Métricas (latência, custo)
+- ✅ TraceID para correlação
+
+**Quando usa:**
+- Armazenar histórico permanente
+- Analytics e relatórios
+- Dashboard web
+- Auditoria
+
+**Tabela:** `vehicle_analysis_log`
+
+**Estrutura:**
+```sql
+CREATE TABLE vehicle_analysis_log (
+    id UUID PRIMARY KEY,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    id_input_type VARCHAR(20) NOT NULL,
+    id_input_value VARCHAR(50) NOT NULL,
+    vin_canonical VARCHAR(17) NOT NULL,
+    supplier_calls JSONB NOT NULL,
+    has_constraints BOOLEAN NOT NULL,
+    estimated_cost_cents INTEGER NOT NULL,
+    trace_id VARCHAR(100) NOT NULL
+);
+```
+
+---
+
+### Comparação:
+
+| Aspecto | MongoDB | PostgreSQL |
+|---------|---------|------------|
+| **Função** | Cache temporário | Persistência permanente |
+| **Dados** | Chaves + respostas | Logs de análise |
+| **Retenção** | 24 horas (TTL) | Indefinido |
+| **Performance** | Ultra-rápido (cache) | Rápido (indexado) |
+| **Uso** | Idempotência | Analytics/Auditoria |
+| **Tamanho** | Pequeno (cache) | Cresce com o tempo |
 
 ---
 

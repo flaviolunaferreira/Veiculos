@@ -20,6 +20,8 @@
 
     <springProfile name="local">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <!-- Filtro de redação de PII -->
+            <filter class="br.com.desafio.veiculos.infrastructure.config.PiiRedactionFilter"/>
             <encoder>
                 <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [Trace:%X{traceId}, VIN:%X{vin}] - %msg%n</pattern>
             </encoder>
